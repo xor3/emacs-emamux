@@ -34,6 +34,9 @@
 
 ;;; Code:
 
+(require 'dash)
+(require 's)
+
 (eval-when-compile
   (defvar helm-mode))
 
@@ -91,9 +94,9 @@ match \"buffer[0-9]+\" in its first subexp as well."
 (defvar emamux:last-command nil
   "Last emit command")
 
-(defvar emamux:session nil)
-(defvar emamux:window nil)
-(defvar emamux:pane nil)
+(defvar-local emamux:session nil)
+(defvar-local emamux:window nil)
+(defvar-local emamux:pane nil)
 
 (defsubst emamux:tmux-running-p ()
   (zerop (process-file "tmux" nil nil nil "has-session")))
@@ -144,7 +147,7 @@ match \"buffer[0-9]+\" in its first subexp as well."
   (setq emamux:session (emamux:read-parameter-session)))
 
 (defun emamux:read-parameter-window ()
-  (let* ((candidates (emamux:get-window))
+  (let* ((candidates (emamux:get-windows))
          (selected (if (= (length candidates) 1)
                        (car candidates)
                      (emamux:completing-read "Window: " candidates nil t))))
@@ -168,51 +171,24 @@ match \"buffer[0-9]+\" in its first subexp as well."
   (format "%s:%s.%s" session window pane))
 
 (defun emamux:get-sessions ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-sessions")
-    (goto-char (point-min))
-    (let (sessions)
-      (while (re-search-forward "^\\([^:]+\\):" nil t)
-        (push (match-string-no-properties 1) sessions))
-      sessions)))
+  (emamux:call-lines "list-sessions" "-F" "#S"))
 
 (defun emamux:get-buffers ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-buffers")
-    (goto-char (point-min))
-    (cl-loop for count from 0 while
-          (re-search-forward emamux:get-buffers-regexp nil t)
-          collect (cons (replace-regexp-in-string
-                         "\\s\\" "" (match-string-no-properties 4))
-                        (if emamux:show-buffers-with-index
-                            count
-                            (match-string-no-properties 1))))))
+  (-map #'number-to-string
+        (number-sequence
+         0 (1- (length (emamux:call-lines "list-buffers"))))))
 
 (defun emamux:show-buffer (index)
-  (with-temp-buffer
-    (emamux:tmux-run-command t "show-buffer" "-b" (if emamux:show-buffers-with-index
-                                                      (number-to-string index)
-                                                      index))
-    (buffer-substring-no-properties (point-min) (point-max))))
-
-(defun emamux:get-window ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-windows" "-t" emamux:session)
-    (goto-char (point-min))
-    (let (windows)
-      (while (re-search-forward "^\\([0-9]+: [^ ]+\\)" nil t)
-        (push (match-string-no-properties 1) windows))
-      (reverse windows))))
+  (emamux:call "show-buffer" "-b" (if emamux:show-buffers-with-index
+                                                     (number-to-string index)
+                                                   index))
+  )
 
 (defun emamux:get-pane ()
-  (with-temp-buffer
-    (let ((pane-id (concat emamux:session ":" emamux:window)))
-      (emamux:tmux-run-command t "list-panes" "-t" pane-id))
-    (goto-char (point-min))
-    (let (panes)
-      (while (re-search-forward "^\\([0-9]+\\):" nil t)
-        (push (match-string-no-properties 1) panes))
-      (reverse panes))))
+  (let ((pane-id (concat emamux:session ":" emamux:window)))
+    (emamux:call-lines "list-panes" "-t" pane-id "-F" "#P"))
+  )
+
 
 (defun emamux:read-command (prompt use-last-cmd)
   (let ((cmd (read-shell-command prompt (and use-last-cmd emamux:last-command))))
@@ -283,14 +259,14 @@ match \"buffer[0-9]+\" in its first subexp as well."
   (interactive)
   (emamux:check-tmux-running)
   (let ((session (emamux:read-parameter-session)))
-    (emamux:tmux-run-command nil "kill-session" "-t" session)))
+    (emamux:call "kill-session" "-t" session)))
 
 (defsubst emamux:escape-semicolon (str)
   (replace-regexp-in-string ";\\'" "\\\\;" str))
 
 (cl-defun emamux:send-keys (input &optional (target (emamux:target-session)))
   (let ((escaped (emamux:escape-semicolon input)))
-    (emamux:tmux-run-command nil "send-keys" "-t" target escaped "C-m")))
+    (emamux:call "send-keys" "-t" target escaped "C-m")))
 
 (defun emamux:set-buffer-argument (index data)
   (if (zerop index)
@@ -299,7 +275,7 @@ match \"buffer[0-9]+\" in its first subexp as well."
 
 (defun emamux:set-buffer (data index)
   (let ((args (emamux:set-buffer-argument index data)))
-    (apply 'emamux:tmux-run-command nil "set-buffer" args)))
+    (apply 'emamux:call "set-buffer" args)))
 
 (defun emamux:in-tmux-p ()
   (and (not (display-graphic-p))
@@ -339,7 +315,7 @@ match \"buffer[0-9]+\" in its first subexp as well."
   (emamux:run-command emamux:last-command))
 
 (defun emamux:reset-prompt (pane)
-  (emamux:tmux-run-command nil "send-keys" "-t" pane "q" "C-u"))
+  (emamux:call "send-keys" "-t" pane "q" "C-u"))
 
 (defun emamux:chdir-pane (dir)
   (let ((chdir-cmd (format " cd %s" (or dir default-directory))))
@@ -368,7 +344,7 @@ match \"buffer[0-9]+\" in its first subexp as well."
      'emamux:runner-pane-id-map)))
 
 (defun emamux:select-pane (target)
-  (emamux:tmux-run-command nil "select-pane" "-t" target))
+  (emamux:call "select-pane" "-t" target))
 
 (defconst emamux:orientation-option-alist
   '((vertical . "-v") (horizonal . "-h")))
@@ -376,17 +352,12 @@ match \"buffer[0-9]+\" in its first subexp as well."
 (defun emamux:split-runner-pane ()
   (let ((orient-option (assoc-default emamux:default-orientation
                                       emamux:orientation-option-alist)))
-    (emamux:tmux-run-command nil
-                             "split-window" "-p"
-                             (number-to-string emamux:runner-pane-height)
-                             orient-option)))
+    (emamux:call "split-window" "-p"
+                 (number-to-string emamux:runner-pane-height)
+                 orient-option)))
 
 (defun emamux:list-panes ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-panes")
-    (cl-loop initially (goto-char (point-min))
-             while (re-search-forward "^\\(.+\\)$" nil t)
-             collect (match-string-no-properties 1))))
+  (emamux:call-lines "list-panes"))
 
 (defun emamux:active-pane-id (panes)
   (cl-loop for pane in panes
@@ -418,10 +389,10 @@ match \"buffer[0-9]+\" in its first subexp as well."
     (emamux:kill-all-panes)))
 
 (defun emamux:kill-all-panes ()
-  (emamux:tmux-run-command nil "kill-pane" "-a"))
+  (emamux:call "kill-pane" "-a"))
 
 (defun emamux:kill-pane (target)
-  (emamux:tmux-run-command nil "kill-pane" "-t" target))
+  (emamux:call "kill-pane" "-t" target))
 
 (defsubst emamux:pane-alive-p (target)
   (zerop (process-file "tmux" nil nil nil "list-panes" "-t" target)))
@@ -443,28 +414,28 @@ match \"buffer[0-9]+\" in its first subexp as well."
   (interactive)
   (emamux:check-runner-alive)
   (emamux:select-pane (emamux:get-runner-pane-id))
-  (emamux:tmux-run-command nil "copy-mode"))
+  (emamux:call "copy-mode"))
 
 ;;;###autoload
 (defun emamux:interrupt-runner ()
   "Send SIGINT to runner pane"
   (interactive)
   (emamux:check-runner-alive)
-  (emamux:tmux-run-command nil "send-keys" "-t" (emamux:get-runner-pane-id) "^c"))
+  (emamux:call "send-keys" "-t" (emamux:get-runner-pane-id) "^c"))
 
 ;;;###autoload
 (defun emamux:clear-runner-history ()
   "Clear history of runner pane"
   (interactive)
   (emamux:check-runner-alive)
-  (emamux:tmux-run-command nil "clear-history" (emamux:get-runner-pane-id)))
+  (emamux:call "clear-history" (emamux:get-runner-pane-id)))
 
 ;;;###autoload
 (defun emamux:zoom-runner ()
   "Zoom runner pane. This feature requires tmux 1.8 or higher"
   (interactive)
   (emamux:check-runner-alive)
-  (emamux:tmux-run-command nil "resize-pane" "-Z" "-t" (emamux:get-runner-pane-id)))
+  (emamux:call "resize-pane" "-Z" "-t" (emamux:get-runner-pane-id)))
 
 (defmacro emamux:ensure-ssh-and-cd (&rest body)
   "Do whatever the operation, and send keys of ssh and cd according to the `default-directory'."
@@ -491,20 +462,14 @@ match \"buffer[0-9]+\" in its first subexp as well."
 With prefix-arg, use '-a' option to insert the new window next to current index."
   (interactive)
   (emamux:ensure-ssh-and-cd
-   (apply 'emamux:tmux-run-command nil "new-window"
+   (apply 'emamux:call "new-window"
           (and current-prefix-arg '("-a")))))
 
 (defun emamux:list-windows ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-windows")
-    (cl-loop initially (goto-char (point-min))
-             while (re-search-forward "^\\(.+\\)$" nil t)
-             collect (match-string-no-properties 1))))
+  (emamux:call-lines "list-windows"))
 
 (defun emamux:window-ids ()
-  (with-temp-buffer
-    (emamux:tmux-run-command t "list-windows" "-F" "#{window_id}")
-    (split-string (buffer-string))))
+  (emamux:call-lines "list-windows" "-F" "#{window_id}"))
 
 (defun emamux:active-window-id (windows)
   (cl-loop for window in windows
@@ -522,8 +487,7 @@ With prefix-arg, use '-a' option to insert the new window next to current index.
 With prefix-arg, use '-a' option to insert the new window next to current index."
   (interactive)
   (setq emamux:cloning-window-state (window-state-get (frame-root-window)))
-  (apply 'emamux:tmux-run-command nil
-         "new-window" (and current-prefix-arg '("-a")))
+  (apply 'emamux:call "new-window" (and current-prefix-arg '("-a")))
   (let ((new-window-id (emamux:current-active-window-id))
         (chdir-cmd (format " cd %s" default-directory))
         (emacsclient-cmd " emacsclient -t -e '(run-with-timer 0.01 nil (lambda () (window-state-put emamux:cloning-window-state nil (quote safe))))'"))
@@ -534,13 +498,13 @@ With prefix-arg, use '-a' option to insert the new window next to current index.
 (defun emamux:split-window ()
   (interactive)
   (emamux:ensure-ssh-and-cd
-   (emamux:tmux-run-command nil "split-window")))
+   (emamux:call "split-window")))
 
 ;;;###autoload
 (defun emamux:split-window-horizontally ()
   (interactive)
   (emamux:ensure-ssh-and-cd
-   (emamux:tmux-run-command nil "split-window" "-h")))
+   (emamux:call "split-window" "-h")))
 
 ;;;###autoload
 (defun emamux:run-region (beg end)
@@ -589,6 +553,38 @@ Keymap:
 | 3   | emamux:split-window-horizontally |
 ")
 
+;; from turnip
+
+(defun emamux:format-status (status &optional extra)
+  "Format the exit status of a tmux call for display to the user.
+See the return value of `call-process' for possible values for STATUS.
+EXTRA may contain further information that is appended to the message."
+  (setq extra (if extra (concat ": " extra) ""))
+  (cond
+   ((stringp status)
+    (format "(tmux killed by signal %s%s)" status extra))
+   ((not (equal 0 status))
+    (format "(tmux failed with code %d%s)" status extra))
+   (t (format "(tmux succeeded%s)" extra))))
+
+(defun emamux:call (&rest arguments)
+  "Call tmux with the specified arguments."
+  (with-temp-buffer
+    (let ((status (apply #'call-process "tmux" nil t nil arguments))
+          (output (s-chomp (buffer-string))))
+      (unless (equal 0 status)
+        (print arguments)
+        (error (emamux:format-status status output)))
+      output)))
+
+(defun emamux:call-lines (&rest args)
+  (s-lines (apply #'emamux:call args)))
+
+(defun emamux:get-windows (&optional session)
+  (let ((session (or session emamux:session)))
+    (when session
+      (emamux:call-lines "list-windows" "-F" "#I: #W" "-t" session))
+    ))
 (provide 'emamux)
 
 ;;; emamux.el ends here
