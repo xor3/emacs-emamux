@@ -216,6 +216,21 @@ match \"buffer[0-9]+\" in its first subexp as well."
       (quit (emamux:unset-parameters))))
 
 ;;;###autoload
+(defun emamux:send-tmux-command ()
+  "Send command to target-session of tmux"
+  (interactive)
+  (emamux:check-tmux-running)
+  (condition-case nil
+      (progn
+        (if (or current-prefix-arg (not (emamux:set-parameters-p)))
+            (emamux:set-parameters))
+        (let* ((target (emamux:target-session))
+               (prompt (format "Command [Send to (%s)]: " target))
+               (input  (read-shell-command prompt nil)))
+          (emamux:tmux-call input)))
+    (quit (emamux:unset-parameters))))
+
+;;;###autoload
 (defun emamux:send-region (beg end)
   "Send region to target-session of tmux"
   (interactive "r")
@@ -584,6 +599,33 @@ EXTRA may contain further information that is appended to the message."
     (when session
       (emamux:call-lines "list-windows" "-F" "#I: #W" "-t" session))
     ))
+
+(defun emamux:choose-pane ()
+  (interactive)
+  (emamux:set-parameter-pane))
+(defun emamux:choose-window ()
+  (interactive)
+  (emamux:set-parameter-window))
+
+(defun emamux:get-current-window ()
+  (interactive)
+  (emamux:call "display-message" "-p" "-t" emamux:session "#I"))
+
+(cl-defun emamux:select-window (&optional (target (emamux:target-session)))
+  (emamux:tmux-call "select-window" "-t" target))
+
+(cl-defun emamux:switch-client (&optional (target (emamux:target-session)))
+  (emamux:tmux-call "switch-client" "-t" target))
+
+(defun emamux:next-window ()
+  "Create new window by cd-ing to current directory.
+With prefix-arg, use '-a' option to insert the new window next to current index."
+  (interactive)
+  (emamux:ensure-ssh-and-cd
+   (emamux:tmux-call "next-window" "-t" emamux:session)
+   (setq emamux:window (emamux:get-current-window))
+   ))
+
 (provide 'emamux)
 
 ;;; emamux.el ends here
