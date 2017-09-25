@@ -224,7 +224,7 @@ match \"buffer[0-9]+\" in its first subexp as well."
         (let* ((target (emamux:target-session))
                (prompt (format "Command [Send to (%s)]: " target))
                (input  (read-shell-command prompt nil)))
-          (emamux:tmux-call input)))
+          (emamux:call input)))
     (quit (emamux:unset-parameters))))
 
 ;;;###autoload
@@ -614,17 +614,17 @@ EXTRA may contain further information that is appended to the message."
   (emamux:call "display-message" "-p" "-t" emamux:session "#I"))
 
 (cl-defun emamux:select-window (&optional (target (emamux:target-session)))
-  (emamux:tmux-call "select-window" "-t" target))
+  (emamux:call "select-window" "-t" target))
 
 (cl-defun emamux:switch-client (&optional (target (emamux:target-session)))
-  (emamux:tmux-call "switch-client" "-t" target))
+  (emamux:call "switch-client" "-t" target))
 
 (defun emamux:next-window ()
   "Create new window by cd-ing to current directory.
 With prefix-arg, use '-a' option to insert the new window next to current index."
   (interactive)
   (emamux:ensure-ssh-and-cd
-   (emamux:tmux-call "next-window" "-t" emamux:session)
+   (emamux:call "next-window" "-t" emamux:session)
    (setq emamux:window (emamux:get-current-window))
    ))
 
