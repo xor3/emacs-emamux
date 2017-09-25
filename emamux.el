@@ -176,13 +176,10 @@ match \"buffer[0-9]+\" in its first subexp as well."
 (defun emamux:get-buffers ()
   (-map #'number-to-string
         (number-sequence
-         0 (1- (length (emamux:call-lines "list-buffers"))))))
+         0 (1- (length (emamux:call-lines "list-buffers" "#{buffer_sample}  #{buffer_name}"))))))
 
-(defun emamux:show-buffer (index)
-  (emamux:call "show-buffer" "-b" (if emamux:show-buffers-with-index
-                                                     (number-to-string index)
-                                                   index))
-  )
+(defun emamux:show-buffer (bufname)
+  (emamux:call "show-buffer" "-b" bufname))
 
 (defun emamux:get-pane ()
   (let ((pane-id (concat emamux:session ":" emamux:window)))
@@ -258,15 +255,20 @@ match \"buffer[0-9]+\" in its first subexp as well."
     (emamux:set-buffer data index)))
 
 ;;;###autoload
-(defun emamux:yank-from-list-buffers ()
-  (interactive)
-  (emamux:check-tmux-running)
-  (let* ((candidates (emamux:get-buffers))
-         (index (assoc-default
-                 (emamux:completing-read
-                  "Buffers: " (mapcar 'car candidates))
-                 candidates)))
-    (insert (emamux:show-buffer index))))
+(defun emamux:yank-from-buffer (&optional buffer)
+  "Yank from tmux buffer with index BUFFER.
+If no argument is provided the paste-buffer is used."
+  (interactive
+   (let* ((buffers (emamux:call-lines "list-buffers" "-F" "#{buffer_name}: #{buffer_sample}"))
+          (choice (completing-read "Buffer: " buffers nil 'confirm)))
+     (list
+      (when (string-match "^\\(buffer[0-9]+\\): " choice)
+        (match-string-no-properties 1 choice)))))
+
+  (insert
+   (message buffer)
+   (apply #'emamux:call "show-buffer"
+          (when buffer (list  "-b" buffer)))))
 
 ;;;###autoload
 (defun emamux:kill-session ()
